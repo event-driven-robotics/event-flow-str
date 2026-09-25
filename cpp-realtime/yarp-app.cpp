@@ -45,6 +45,7 @@ private:
     std::thread vt, et;
     ev::info inf; 
     double packets{0.0}, proc_time{0.0}, rate{0.0};
+    std::string filename;
 
     zrtFlow zrt_flow;
     cv::Mat sample, sample_sparse, canvas;
@@ -94,8 +95,8 @@ public:
             out_img_size = img_size;
         } else {
             yInfo() << "Webcam opened, running the flow visualisation with webcam feed";
-            webcam.set(cv::CAP_PROP_FRAME_HEIGHT, height / 2); //hack?
-            webcam.set(cv::CAP_PROP_FRAME_WIDTH, width / 2); //hack?
+            webcam.set(cv::CAP_PROP_FRAME_HEIGHT, height / 2); //hack to get webcam to work?
+            webcam.set(cv::CAP_PROP_FRAME_WIDTH, width / 2); 
             yInfo() << webcam.get(cv::CAP_PROP_FRAME_HEIGHT) << webcam.get(cv::CAP_PROP_FRAME_WIDTH);
             out_img_size = {width * 2, height};
         }
@@ -106,16 +107,15 @@ public:
         sample_sparse = cv::Mat(img_size, CV_8UC3, cv::Vec3b(255, 255, 255));
         canvas = cv::Mat(out_img_size, CV_8UC3);
 
-        
-
-
-
-        saver.open("/home/aglover-iit.local/Downloads/flow_demo.mp4",
+        filename = rf.check("output_video", Value("")).asString();
+        if(!filename.empty()) {
+            saver.open(filename,
                    cv::VideoWriter::fourcc('a', 'v', 'c', '1'),
                    1.0 / getPeriod(), out_img_size, true);
-        if (!saver.isOpened()) {
-            yError() << "Could not open output video";
-            return false;
+            if (!saver.isOpened()) {
+                yError() << "Could not open output video at" << filename;
+                return false;
+            }
         }
         
 
@@ -212,6 +212,7 @@ public:
 
     bool interruptModule() override
     {
+        //causes updateModule to return false, close should be called
         return true;
     }
 
@@ -219,11 +220,12 @@ public:
         for (auto& f : frames)
             saver << f;
         saver.release();
-        yInfo() << "Saved video to /home/aglover-iit.local/Downloads/flow_demo.mp4";
-        webcam.release();
+        yInfo() << "Saved video to" << filename;
+        
         input.stop();
         vt.join();
         et.join();
+        webcam.release();
         return true;
     }
 };
