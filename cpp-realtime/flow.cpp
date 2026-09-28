@@ -17,7 +17,7 @@
  */
 
 #include "flow.h"
-#include <vector>
+
 
 zrtBlock::zrtBlock(int N) {
     this->N = N;
@@ -85,7 +85,8 @@ void zrtBlock::updateFlow(size_t n)
     if(n < 3) n = 3;
     if(x_dist.size() < n) {
         double magnitude = sqrt(flow.x*flow.x+flow.y*flow.y);
-        double max_mag = 1.0 / (yarp::os::Time::now() - last_update_tic);
+        double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - last_update_tic).count();
+        double max_mag = 1.0 / elapsed;
         if(magnitude > max_mag) flow *= max_mag / magnitude;
         return;
     } else {
@@ -93,7 +94,7 @@ void zrtBlock::updateFlow(size_t n)
         std::sort(y_dist.begin(), y_dist.end());
         flow = {x_dist[x_dist.size()/2], y_dist[y_dist.size()/2]};
         x_dist.clear(); y_dist.clear();
-        last_update_tic = yarp::os::Time::now();
+        last_update_tic = std::chrono::steady_clock::now();
     }      
 }
 

@@ -17,11 +17,8 @@
  */
 
 #pragma once
+#include <chrono>
 #include <opencv2/opencv.hpp>
-#include <numeric>
-#include <iostream>
-#include <yarp/os/Time.h>
-
 
 class zrtBlock {
     friend class zrtFlow;
@@ -35,7 +32,7 @@ private:
     int i{0}, is{0}; //new event position live/snap
     int j{0}, js{0}; //previously updated position live/snap
     
-    double last_update_tic{0}; //use time for flow decay
+    std::chrono::steady_clock::time_point last_update_tic{std::chrono::steady_clock::now()};
 
     //calculate connections for a single event on the SAE
     void singlePixConnections(cv::Mat &sae, int d, double triplet_tolerance, cv::Point p0);
