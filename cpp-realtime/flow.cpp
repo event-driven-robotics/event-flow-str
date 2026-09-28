@@ -148,7 +148,9 @@ void zrtFlow::initialise(cv::Size res, int block_size, int max_N, int connection
 void zrtFlow::add(int u, int v, double t)
 {
     sae.at<double>(v, u) = t;
-    blockmap[v*sae.cols+u]->add({u, v});
+    if(blockmap[v*sae.cols+u]) {
+        blockmap[v*sae.cols+u]->add({u, v});
+    }
 }
 
 //go through each block and update the list of flow vectors

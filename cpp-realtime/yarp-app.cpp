@@ -35,7 +35,7 @@ private:
     int block_size{40};
     int max_n{80};
     int con_d{2};
-    int con_upd{20};
+    int con_min{20};
     double trip_tol{0.125};
     int smooth{3};
     double period{0.03};
@@ -64,6 +64,21 @@ public:
 
     bool configure(yarp::os::ResourceFinder& rf) override
     {
+        if(rf.check("help") || rf.check("h")) {
+            yInfo() << "Usage: yarp-flow-str [options]\n"
+                    << "  --name <string>            Module name (default: /event-flow-str)\n"
+                    << "  --output_video <string>    Output video file (default: disabled)\n"
+                    << "  --block_size <pixels>      Block size:  (default: 40, advise cam width/32)\n"
+                    << "  --max_n <events>           Maximum events (default: 80, higher = slower)\n"
+                    << "  --con_d <pixels>           Connectivity distance (default: 2, triplet search region)\n"
+                    << "  --con_min <triplets>       Connectivity minimum (default: 20)\n"
+                    << "  --trip_tol <seconds>       Triplet tolerance (default: 0.125)\n"
+                    << "  --smooth <blocks>          Smoothing (default: 3)\n"
+                    << "  --width <pixels>           Image width (default: 640)\n"
+                    << "  --height <pixels>          Image height (default: 480)\n"
+                    << "  --period <seconds>         Update period in seconds (default: 0.03)";
+            return false;
+        }
         setName(rf.check("name", Value("/event-flow-str")).asString().c_str());
         
         if(!Network::checkNetwork(1.0)) {
@@ -71,7 +86,7 @@ public:
             return false;
         }
 
-        if(!input.open(rf.check("input", Value(getName() +"/AE:i")).asString())) {
+        if(!input.open(getName() +"/AE:i")) {
             yError() << "could not open input port";
             return false;
         }
@@ -79,7 +94,7 @@ public:
         block_size = rf.check("block_size", Value(block_size)).asInt32();
         max_n = rf.check("max_n", Value(max_n)).asInt32();
         con_d = rf.check("con_d", Value(con_d)).asInt32();
-        con_upd = rf.check("con_upd", Value(con_upd)).asInt32();
+        con_min = rf.check("con_min", Value(con_min)).asInt32();
         trip_tol = rf.check("trip_tol", Value(trip_tol)).asFloat64();
         smooth = rf.check("smooth", Value(smooth)).asInt32();
 
@@ -87,7 +102,7 @@ public:
         int height = rf.check("height", Value(480)).asInt32();
         img_size = {width, height};
 
-        period = rf.check("period", Value(0.33)).asFloat64();
+        period = rf.check("period", Value(0.03)).asFloat64();
 
         webcam_opened = webcam.open(-1);
         if (!webcam.isOpened()) {
@@ -102,7 +117,7 @@ public:
         }
 
         // BLOCK, n, d, update#, max_dt, tolerance, SMOOTH
-        zrt_flow.initialise(img_size, block_size, max_n, con_d, con_upd, trip_tol, smooth);
+        zrt_flow.initialise(img_size, block_size, max_n, con_d, con_min, trip_tol, smooth);
         sample = cv::Mat(img_size, CV_8UC3);
         sample_sparse = cv::Mat(img_size, CV_8UC3, cv::Vec3b(255, 255, 255));
         canvas = cv::Mat(out_img_size, CV_8UC3);
@@ -117,7 +132,6 @@ public:
                 return false;
             }
         }
-        
 
         cv::namedWindow("EVENT-FLOW-STR", cv::WINDOW_NORMAL);
         cv::resizeWindow("EVENT-FLOW-STR", out_img_size);
@@ -137,10 +151,12 @@ public:
     void updateEvents() {
         while (input.isRunning()) {
             auto this_inf = input.readAll(true);
+            if(!input.isRunning()) break;
 
             inf.duration += this_inf.duration * alpha; //alpha is a smoothing factor for visualisation
 
             double tic = yarp::os::Time::now();
+            //for each event add it to the block
             for (auto v = input.begin(); v != input.end(); v++) {
                 zrt_flow.add(v->x, v->y, v.timestamp());
                 sample_sparse.at<cv::Vec3b>(v->y, v->x) = white - sample.at<cv::Vec3b>(v->y, v->x);
@@ -186,16 +202,20 @@ public:
 
     bool updateModule() override {
         static cv::Mat wc;
-        webcam >> wc;
-        cv::resize(wc, canvas({img_size.width, 0, img_size.width, img_size.height}), img_size);
+        if(webcam_opened) {
+            webcam >> wc;
+            cv::resize(wc, canvas({img_size.width, 0, img_size.width, img_size.height}), img_size);
+        }
 
         sample_sparse.copyTo(canvas({{0, 0}, img_size}));
         sample_sparse = white;
         
         drawBars(canvas);
 
-        frames.emplace_back(cv::Mat());
-        canvas.copyTo(frames.back());
+        if(!filename.empty()) {
+            frames.emplace_back(cv::Mat());
+            canvas.copyTo(frames.back());
+        }
         cv::imshow("EVENT-FLOW-STR", canvas);
         cv::waitKey(1);
 
@@ -217,25 +237,29 @@ public:
     }
 
     bool close() override {
-        for (auto& f : frames)
-            saver << f;
-        saver.release();
-        yInfo() << "Saved video to" << filename;
-        
+        if(!filename.empty()) {
+            for (auto& f : frames)
+                saver << f;
+            saver.release();
+            yInfo() << "Saved video to" << filename;
+        }
+        yInfo() << "Stopping input port";
         input.stop();
+        yInfo() << "Waiting for flow thread";
         vt.join();
+        yInfo() << "Waiting for event thread";
         et.join();
-        webcam.release();
+        yInfo() << "Release webcam";
+        if(webcam_opened) webcam.release();
         return true;
     }
 };
 
 int main(int argc, char* argv[])
 {
-    yarp_flow_app yarpapp;
     ResourceFinder rf;
-    //rf.setDefaultConfigFile("/usr/local/src/EDOPT/configCAR.ini");
     rf.configure(argc, argv);
-    
+
+    yarp_flow_app yarpapp;
     return yarpapp.runModule(rf);
 }
