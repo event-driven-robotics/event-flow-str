@@ -1,0 +1,13 @@
+# ATIS3 / Prophesee camera-driver image.
+# This official image already contains Metavision SDK, YARP, event-driven, and
+# the atis-bridge-sdk executable. Pinning the tag avoids downloading the SDK
+# from the Prophesee package server during every local build.
+
+FROM eventdrivenrobotics/atis-gen3:focal_yarp_v3.8.1_ed_vmain
+
+WORKDIR /workspace
+
+# Configure YARP at runtime, then run:
+#   yarp conf <YARP_SERVER_IP> 10000
+#   atis-bridge-sdk --s 40
+CMD ["bash"]
