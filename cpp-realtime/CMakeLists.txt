@@ -17,6 +17,9 @@ find_package(YARP COMPONENTS os REQUIRED)
 find_package(event-driven REQUIRED)
 find_package(HDF5 REQUIRED COMPONENTS CXX)
 
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 add_executable(${PROJECT_NAME} yarp-app.cpp flow.h flow.cpp)
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_17)
 #target_compile_options(sixdofobject PRIVATE -Werror -Wall -Wextra)

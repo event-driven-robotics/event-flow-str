@@ -13,6 +13,9 @@
 #include <string>
 #include <vector>
 #include "flow.h"
+#include <unistd.h>
+
+#include <algorithm>
 
 namespace {
 
@@ -84,6 +87,42 @@ std::vector<T> readVector(
     return values;
 }
 
+template <typename T>
+std::vector<T> readVectorAfterFraction(
+    const H5::H5File& file,
+    const std::string& dataset_path,
+    const H5::PredType& type,
+    double drop_fraction = 0.50)
+{
+    H5::DataSet dataset = file.openDataSet(dataset_path);
+    H5::DataSpace file_space = dataset.getSpace();
+
+    hsize_t dims[1];
+    file_space.getSimpleExtentDims(dims);
+
+    const hsize_t total = dims[0];
+    const hsize_t start = static_cast<hsize_t>(
+        std::floor(static_cast<double>(total) * drop_fraction)
+    );
+    const hsize_t count = total - start;
+
+    //choose data within [start, total)
+    hsize_t offset[1] = {start};
+    hsize_t selected_count[1] = {count};
+    file_space.selectHyperslab(
+        H5S_SELECT_SET,
+        selected_count,
+        offset
+    );
+
+    // Correspond to continuous one-dimensional array in the memory 
+    H5::DataSpace memory_space(1, selected_count);
+    std::vector<T> result(count);
+
+    dataset.read(result.data(), type, memory_space, file_space);
+    return result;
+}
+
 EventData loadEvents(const std::string& path)
 {
     const H5::H5File file(path, H5F_ACC_RDONLY);
@@ -92,6 +131,10 @@ EventData loadEvents(const std::string& path)
     events.y = readVector<std::uint16_t>(file, "/events/y", H5::PredType::NATIVE_UINT16);
     events.t = readVector<std::uint32_t>(file, "/events/t", H5::PredType::NATIVE_UINT32);
     events.p = readVector<std::uint8_t>(file, "/events/p", H5::PredType::NATIVE_UINT8);
+    if (!events.t.empty()) {
+    std::cout << "First timestamp: " << events.t.front() << " us" << std::endl;
+    std::cout << "Last timestamp: " << events.t.back() << " us" << std::endl;
+    }
     events.ms_to_idx =
         readVector<std::uint64_t>(file, "/ms_to_idx", H5::PredType::NATIVE_UINT64);
 
@@ -217,6 +260,42 @@ DsecData loadData(const std::string& events_path,
     data.intervals = loadIntervals(intervals_path);
     return data;
 }
+void save_results(cv::Mat &flow_x, cv::Mat &flow_y, int id, float time_duration, int height, int width)
+{
+    if (flow_x.type() != CV_32FC1 || flow_y.type() != CV_32FC1 ||
+        flow_x.rows != height || flow_x.cols != width ||
+        flow_y.rows != height || flow_y.cols != width) {
+        throw std::runtime_error("flow_x / flow_y must be CV_32FC1 with matching size.");
+    }
+
+    const auto encode = [](float v) -> std::uint16_t {
+        return static_cast<std::uint16_t>(
+            std::clamp(v * 128.0f + 32768.0f, 0.0f, 65535.0f));
+    };
+
+    cv::Mat output(height, width, CV_16UC3);
+
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const float fx = flow_x.at<float>(y, x) * time_duration;
+            const float fy = flow_y.at<float>(y, x) * time_duration;
+
+            // OpenCV Mat: B, G, R
+            // PNG RGB:     R=flow_x, G=flow_y, B=1
+            output.at<cv::Vec3w>(y, x) = cv::Vec3w(
+                1,          // B: valid 
+                encode(fy), // G: flow_y
+                encode(fx)  // R: flow_x
+            );
+        }
+    }
+
+    const std::string filename = cv::format("./sampledata/saved_results/%06d.png", id);
+
+    if (!cv::imwrite(filename, output)) {
+        throw std::runtime_error("Cannot write PNG: " + filename);
+    }
+}
 
 } // namespace
 
@@ -230,11 +309,11 @@ int main(int argc, char* argv[])
     }
 
     const std::string events_path =
-        argc > 1 ? argv[1] : "../sampledata/events_first10pct.h5";
+        argc > 1 ? argv[1] : "./sampledata/events.h5";
     const std::string rectify_map_path =
-        argc > 2 ? argv[2] : "../sampledata/rectify_map.h5";
+        argc > 2 ? argv[2] : "./sampledata/rectify_map.h5";
     const std::string intervals_path =
-        argc > 3 ? argv[3] : "../sampledata/interlaken_00_b.csv";
+        argc > 3 ? argv[3] : "./sampledata/zurich_city_15_a.csv";
 
     cv::namedWindow("Flow", cv::WINDOW_NORMAL | cv::WINDOW_KEEPRATIO);
     std::cout << "Loading events from " << events_path << ", rectify map from "
@@ -256,29 +335,86 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    cv::Mat blank_img(data.rectify_map.rows, data.rectify_map.cols, CV_8UC3, cv::Scalar(255, 255, 255));
-    cv::Mat events_img(data.rectify_map.rows, data.rectify_map.cols, CV_8UC3, cv::Scalar(255, 255, 255));
-    zrtFlow flow;
-    flow.initialise(data.rectify_map.size(), 20, 200, 2, 20, 0.125, 3);
+
+    zcflow flow;
+    const int rows = data.rectify_map.rows;
+    const int cols = data.rectify_map.cols;
+
+    cv::Mat sae_p_live = cv::Mat::zeros(rows, cols, CV_64F);
+    cv::Mat sae_n_live = cv::Mat::zeros(rows, cols, CV_64F);
+    cv::Mat events_img(rows, cols, CV_8UC3, cv::Scalar(255, 255, 255));
+
+    cv::Mat events_gray;
+    cv::Mat flow_x(rows, cols, CV_32F, cv::Scalar(0));
+    cv::Mat flow_y(rows, cols, CV_32F, cv::Scalar(0));
+    const cv::Size output_size(cols, rows);
+
+    cv::Mat canvas(output_size, CV_8UC3, {255,255,255});
+    cv::Mat flow_x_results(output_size, CV_32F, cv::Scalar(0));
+    cv::Mat flow_y_results(output_size, CV_32F, cv::Scalar(0));
+    cv::Mat mask;
+
+    std::size_t interval_counter = 0;
+    float t_duration = 0.0;
+    double tic_live;
+    
+    flow.initialise(rows, cols, 20, 0);
+
     for (std::size_t i = 0; i < data.events.x.size(); ++i) {
         const std::uint16_t x = data.events.x[i];
         const std::uint16_t y = data.events.y[i];
-        const double t = data.events.t[i]*1e-6;
+        const bool p = data.events.p[i];
+        const double t = (data.events.t[i] + data.events.t_offset)*1e-6;
         
         // Process this event using x, y, and t.
-        flow.add(x, y, t);
-        events_img.at<cv::Vec3b>(y, x) = cv::Vec3b(0, 0, 0); // Mark the event on the image
-        if (i % 100000 == 0) {
-            flow.update();
-            cv::Mat flow_image = blank_img - flow.makebgr();
-            cv::imshow("Flow", flow_image);
+        events_img.at<cv::Vec3b>(y, x) = cv::Vec3b(0, 0, 0); ; // Mark the event on the image
+
+        flow.update_sae(x, y, p, t);
+
+
+        tic_live = t; 
+        if (i%1000 == 0){
+            flow.update(tic_live);
+        }
+        
+        // extract&save results
+        while (interval_counter < data.intervals.size() && tic_live >= data.intervals[interval_counter].to_timestamp_us * 1e-6){
+            t_duration = (data.intervals[interval_counter].to_timestamp_us - data.intervals[interval_counter].from_timestamp_us) * 1e-6;
+
+            canvas.setTo(cv::Scalar(255, 255, 255));
+            flow_x_results.setTo(0.0f);
+            flow_y_results.setTo(0.0f);
+
+
+            cv::cvtColor(events_img, events_gray, cv::COLOR_BGR2GRAY);
+            cv::compare(events_gray, 0, mask, cv::CMP_EQ);
+
+            flow.makebgr().copyTo(canvas, mask);
+            cv::resize(flow.xy[0], flow_x, flow_x.size(), 0.0, 0.0, cv::INTER_LINEAR);
+            cv::resize(flow.xy[1], flow_y, flow_y.size(), 0.0, 0.0, cv::INTER_LINEAR);
+            flow_x.copyTo(flow_x_results, mask);
+            flow_y.copyTo(flow_y_results, mask);
+
+            cv::imshow("Flow", canvas);
             cv::imshow("Events", events_img);
+
             if (cv::waitKey(3) == 27) { // ESC key
                 break;  
             }
+            save_results(flow_x_results, 
+                flow_y_results, 
+                data.intervals[interval_counter].file_index, 
+                t_duration, 
+                output_size.height,
+                output_size.width);
+
             events_img.setTo(cv::Scalar(255, 255, 255)); // Reset the events image
+            interval_counter ++;
+            flow.clear_blocks();
+        }
+        if (interval_counter >= data.intervals.size()){
+            return 0;
         }
     }
-
     return 0;
 }
