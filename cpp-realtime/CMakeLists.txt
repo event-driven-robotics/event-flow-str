@@ -15,6 +15,10 @@ find_package(YCM REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(YARP COMPONENTS os REQUIRED)
 find_package(event-driven REQUIRED)
+find_package(HDF5 REQUIRED COMPONENTS CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_executable(${PROJECT_NAME} yarp-app.cpp flow.h flow.cpp)
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_17)
@@ -24,4 +28,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE  YARP::YARP_init
                                             ev::event-driven
                                             ${OpenCV_LIBS})
 
-install(TARGETS ${PROJECT_NAME} DESTINATION ${CMAKE_INSTALL_BINDIR})
+add_executable(dsec-app dsec-app.cpp flow.h flow.cpp)
+target_compile_features(dsec-app PRIVATE cxx_std_17)
+target_include_directories(dsec-app PRIVATE ${HDF5_INCLUDE_DIRS})
+target_link_libraries(dsec-app PRIVATE ${HDF5_CXX_LIBRARIES} ${HDF5_LIBRARIES} ${OpenCV_LIBS})
+
+install(TARGETS ${PROJECT_NAME} dsec-app DESTINATION ${CMAKE_INSTALL_BINDIR})

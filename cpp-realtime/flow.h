@@ -93,3 +93,79 @@ public:
 
     cv::Mat makebgr();
 };
+
+// ==================================
+// zcflow is Zhichao's first version
+// ==================================
+
+class zcflowBlock
+{
+    friend class zcflow;
+
+private:
+    cv::Vec3b color;
+    cv::Point2i index;
+    cv::Vec2f flow;
+
+    std::vector<double> x_dist;
+    std::vector<double> y_dist;
+
+    // cv::Mat sae;
+    // parameters
+    double tolerance{0.125};
+    double refracotry_period{0.002};
+    double dt{0.05};
+    size_t N{30};
+
+    static const int d_coordinate;
+
+public:
+
+    void initialise(cv::Point2i i);
+
+    bool block_update_zc(const cv::Mat &sae, int x, int y, cv::Mat &flow_mat, int block_size, cv::Point2i b_index);
+
+    void point_velocity_zc(const cv::Mat &sae, int x, int y, std::vector<double> &flow_x, std::vector<double> &flow_y);
+
+};
+
+
+class zcflow
+{
+private:
+
+    std::vector<zcflowBlock> blocks;
+
+    cv::Mat flow;
+    cv::Mat flow_;
+    cv::Mat flow_x;
+    cv::Mat flow_y;
+
+    cv::Mat sae_p;
+    cv::Mat sae_n;
+
+    double toc{0.0};
+
+    int block_size;
+    cv::Size n_blocks;
+    cv::Size flow_blocks;
+    cv::Point2i b_index;
+
+
+public:
+    cv::Mat flowbgr;
+    cv::Mat xy[2]; //X,Y  
+    int camera_size_compensation = 1;
+    int boundary_compensation = 2;
+
+    void initialise(int rows, int cols, int block_size, int camera_size_compensation_);
+
+    void update_sae(const std::uint16_t x, const std::uint16_t y, const bool p, const double t);
+    
+    void clear_blocks();
+
+    void update(double tic);
+    
+    cv::Mat makebgr();
+
+};
