@@ -169,6 +169,6 @@ The following example tests the estimation accuracy:
     ./sampledata/interlaken_00_b.csv
 ```
 
-To load .h5 files, the Blosc filter plugin is required. Follow these [intructions](https://github.com/tub-rip/events_h52bag) to install it. 
+To load .h5 files, the Blosc filter plugin is required. Follow these [instructions](https://github.com/tub-rip/events_h52bag) to install it. 
 
 
