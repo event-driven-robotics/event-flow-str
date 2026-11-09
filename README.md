@@ -157,3 +157,18 @@ echo $?
 
 An exit code of `0` means the connection is active. The application window should then receive events and show the optical-flow visualisation.
 
+
+### Run evaluation on DSEC
+
+The following example tests the estimation accuracy:
+
+```bash
+./build/dsec-app \
+    ./sampledata/events.h5 \
+    ./sampledata/rectify_map.h5 \
+    ./sampledata/interlaken_00_b.csv
+```
+
+To load .h5 files, the Blosc filter plugin is required. Follow these [intructions](https://github.com/tub-rip/events_h52bag) to install it. 
+
+
